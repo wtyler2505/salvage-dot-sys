@@ -46,7 +46,3 @@
 [context.branch-deploy.environment]
   NETLIFY_USE_EDGE_FUNCTIONS = "false"
   NETLIFY_EXPERIMENTAL_EDGE_FUNCTIONS = "false"
-
-# Disable edge functions completely
-[[edge_functions]]
-  # Empty array to explicitly disable
