@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Package, Plus, Grid, List, Filter, Search, Upload, Brain, MessageSquare, RefreshCw, Camera } from 'lucide-react';
 import { Button } from '@/components/common/Button';
 import { Input } from '@/components/common/Input';
@@ -29,9 +29,10 @@ export const PartsInventory: React.FC = () => {
   const [editingPart, setEditingPart] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
+  const [debugInfo, setDebugInfo] = useState<any>(null);
 
   // Fetch parts with filters
-  const { data: partsData, isLoading, error, refetch } = useParts({
+  const { data: partsData, isLoading, error, refetch, isError, isSuccess } = useParts({
     search: searchQuery || undefined,
     category: categoryFilter || undefined,
     limit: 100
@@ -40,6 +41,31 @@ export const PartsInventory: React.FC = () => {
   const deletePart = useDeletePart();
 
   const parts = partsData?.parts || [];
+
+  // Debug effect to track parts data changes
+  useEffect(() => {
+    console.log('🔄 [PartsInventory] Parts data changed:', {
+      isLoading,
+      isError,
+      isSuccess,
+      partsCount: parts.length,
+      totalFromAPI: partsData?.total,
+      error: error?.message,
+      timestamp: new Date().toISOString()
+    });
+
+    setDebugInfo({
+      isLoading,
+      isError,
+      isSuccess,
+      partsCount: parts.length,
+      totalFromAPI: partsData?.total,
+      error: error?.message,
+      lastUpdate: new Date().toISOString(),
+      searchQuery,
+      categoryFilter
+    });
+  }, [isLoading, isError, isSuccess, parts.length, partsData?.total, error, searchQuery, categoryFilter]);
 
   const handleAddPart = () => {
     setEditingPart(null);
@@ -81,16 +107,30 @@ export const PartsInventory: React.FC = () => {
   };
 
   const handleRefresh = () => {
-    console.log('Manual refresh triggered');
+    console.log('🔄 [PartsInventory] Manual refresh triggered');
     queryClient.removeQueries({ queryKey: ['parts'] }); // Clear cache
     refetch();
   };
 
   const handlePartAdded = () => {
+    console.log('🎉 [PartsInventory] Part added callback triggered');
     // Force refresh the parts list immediately
     refetch();
     // Also invalidate cache to ensure fresh data
     queryClient.invalidateQueries({ queryKey: ['parts'] });
+  };
+
+  // Force debug refresh button
+  const handleDebugRefresh = () => {
+    console.log('🐛 [PartsInventory] DEBUG: Force clearing all cache and refetching');
+    
+    // Clear ALL React Query cache
+    queryClient.clear();
+    
+    // Wait a moment then refetch
+    setTimeout(() => {
+      refetch();
+    }, 100);
   };
 
   // Get unique categories for filter
@@ -106,6 +146,16 @@ export const PartsInventory: React.FC = () => {
             <p className="text-text-muted mt-1 font-mono">
               {parts.length} PARTS • {parts.filter(p => p.is_available).length} AVAILABLE
             </p>
+            
+            {/* Debug Info */}
+            {debugInfo && (
+              <details className="mt-2">
+                <summary className="text-xs text-cyber-orange cursor-pointer font-mono">🐛 DEBUG INFO (Click to expand)</summary>
+                <pre className="text-xs text-text-muted bg-bg-tertiary p-2 rounded mt-1 overflow-auto">
+                  {JSON.stringify(debugInfo, null, 2)}
+                </pre>
+              </details>
+            )}
           </div>
           <div className="flex items-center space-x-3">
             <Button 
@@ -115,6 +165,14 @@ export const PartsInventory: React.FC = () => {
               icon={<RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />}
             >
               REFRESH
+            </Button>
+            <Button 
+              variant="outline" 
+              onClick={handleDebugRefresh}
+              disabled={isLoading}
+              className="text-cyber-orange border-cyber-orange"
+            >
+              🐛 DEBUG REFRESH
             </Button>
             <Button 
               variant="outline" 
@@ -214,9 +272,14 @@ export const PartsInventory: React.FC = () => {
                 <Package className="w-12 h-12 text-cyber-orange mx-auto mb-4" />
                 <h3 className="text-lg font-medium text-text-primary font-mono mb-2">ERROR LOADING PARTS DATABASE</h3>
                 <p className="text-text-secondary mb-4 font-mono">{error instanceof Error ? error.message : 'Please try again later'}</p>
-                <Button onClick={handleRefresh} variant="outline" glow>
-                  TRY AGAIN
-                </Button>
+                <div className="space-y-2">
+                  <Button onClick={handleRefresh} variant="outline" glow>
+                    TRY AGAIN
+                  </Button>
+                  <Button onClick={handleDebugRefresh} variant="outline" className="text-cyber-orange border-cyber-orange">
+                    🐛 FORCE REFRESH
+                  </Button>
+                </div>
               </div>
             ) : parts.length === 0 && !isLoading ? (
               <div className="text-center py-12">
@@ -228,17 +291,26 @@ export const PartsInventory: React.FC = () => {
                     : 'Add your first part to get started'
                   }
                 </p>
-                {(searchQuery || categoryFilter) && (
+                <div className="space-y-2">
+                  {(searchQuery || categoryFilter) && (
+                    <Button 
+                      onClick={() => {
+                        setSearchQuery('');
+                        setCategoryFilter('');
+                      }} 
+                      variant="outline"
+                    >
+                      CLEAR FILTERS
+                    </Button>
+                  )}
                   <Button 
-                    onClick={() => {
-                      setSearchQuery('');
-                      setCategoryFilter('');
-                    }} 
-                    variant="outline"
+                    onClick={handleDebugRefresh} 
+                    variant="outline" 
+                    className="text-cyber-orange border-cyber-orange"
                   >
-                    CLEAR FILTERS
+                    🐛 DEBUG: FORCE REFRESH
                   </Button>
-                )}
+                </div>
               </div>
             ) : partsView === 'grid' ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

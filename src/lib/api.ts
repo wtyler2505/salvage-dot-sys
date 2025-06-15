@@ -165,8 +165,8 @@ class APIClient {
         : '/.netlify/functions';
 
       const fullUrl = `${baseUrl}/${endpoint}`;
-      console.log(`🌐 Making API request to: ${fullUrl}`);
-      console.log('🔑 Using token:', currentToken.substring(0, 20) + '...');
+      console.log(`🌐 [${endpoint}] Making API request to: ${fullUrl}`);
+      console.log('🔑 [${endpoint}] Using token:', currentToken.substring(0, 20) + '...');
 
       const response = await fetch(fullUrl, {
         ...options,
@@ -182,11 +182,11 @@ class APIClient {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`❌ API Error ${response.status} for ${endpoint}:`, errorText);
+        console.error(`❌ [${endpoint}] API Error ${response.status}:`, errorText);
         
         // Enhanced 404 error handling for development
         if (response.status === 404) {
-          console.error('🚨 API 404 Error - Enhanced Troubleshooting:');
+          console.error(`🚨 [${endpoint}] API 404 Error - Enhanced Troubleshooting:`);
           
           if (import.meta.env.DEV) {
             const currentUrl = window.location.href;
@@ -215,7 +215,7 @@ class APIClient {
                 `3. Open: http://localhost:3000`
               );
             } else {
-              console.error('🔍 Development troubleshooting checklist:');
+              console.error(`🔍 [${endpoint}] Development troubleshooting checklist:`);
               console.error('  1. Verify you started with: npm run dev');
               console.error('  2. Check if Netlify Dev server is running');
               console.error('  3. Verify function exists:', `netlify/functions/${endpoint}.ts`);
@@ -253,34 +253,34 @@ class APIClient {
         
         // Handle authentication errors
         if (response.status === 401) {
-          console.error('Received 401 Unauthorized');
+          console.error(`❌ [${endpoint}] Received 401 Unauthorized`);
           
           // If this is the first attempt, try to refresh token and retry
           if (retryCount === 0) {
-            console.log('First 401 attempt, trying to refresh token and retry...');
+            console.log(`🔄 [${endpoint}] First 401 attempt, trying to refresh token and retry...`);
             
             try {
               const { data: { session: newSession }, error: refreshError } = await supabase.auth.refreshSession();
               
               if (refreshError || !newSession?.access_token) {
-                console.error('Token refresh on 401 failed:', refreshError);
+                console.error(`❌ [${endpoint}] Token refresh on 401 failed:`, refreshError);
                 await this.handleAuthFailure('Token refresh on 401 failed');
                 throw new Error('Authentication expired - please login again');
               }
               
-              console.log('Token refreshed on 401, retrying request...');
+              console.log(`🔄 [${endpoint}] Token refreshed on 401, retrying request...`);
               
               // Retry the request with the new token
               return this.makeRequest(endpoint, options, retryCount + 1);
               
             } catch (refreshError) {
-              console.error('Error during 401 token refresh:', refreshError);
+              console.error(`❌ [${endpoint}] Error during 401 token refresh:`, refreshError);
               await this.handleAuthFailure('Error during 401 token refresh');
               throw new Error('Authentication expired - please login again');
             }
           } else {
             // This is a retry that still failed, clear auth state
-            console.error('Retry also failed with 401, clearing auth state');
+            console.error(`❌ [${endpoint}] Retry also failed with 401, clearing auth state`);
             await this.handleAuthFailure('Retry failed with 401');
             throw new Error('Authentication expired - please login again');
           }
@@ -296,11 +296,15 @@ class APIClient {
       }
 
       const result = await response.json();
-      console.log('✅ API response received successfully for:', endpoint);
+      console.log(`✅ [${endpoint}] API response received successfully:`, {
+        hasData: !!result,
+        dataKeys: result ? Object.keys(result) : [],
+        timestamp: new Date().toISOString()
+      });
       return result;
       
     } catch (error) {
-      console.error('💥 API Request failed for', endpoint, ':', error);
+      console.error(`💥 [${endpoint}] API Request failed:`, error);
       
       // Re-throw development server errors immediately
       if (error instanceof Error && error.message.includes('DEVELOPMENT ERROR')) {
@@ -407,10 +411,15 @@ class APIClient {
     description: string;
     mode: 'research' | 'quick' | 'parse' | 'clarify';
     context?: any;
+    imageUrl?: string;
     original_input?: string;
     clarification_answers?: Record<string, string>;
   }) => {
-    console.log('🔍 Making Perplexity-powered research request:', body.description);
+    console.log('🔍 Making AI research request:', { 
+      description: body.description?.substring(0, 100), 
+      mode: body.mode,
+      hasImage: !!body.imageUrl 
+    });
     return this.makeRequest('ai-research-part', {
       method: 'POST',
       body: JSON.stringify(body)
@@ -468,7 +477,7 @@ class APIClient {
     limit?: number;
     offset?: number;
   } = {}) => {
-    console.log('API: Getting parts with filters:', filters);
+    console.log('🔍 [API.getParts] Starting request with filters:', filters);
     return this.makeRequest('parts-crud', {
       method: 'POST', // Using POST to send filters in body
       body: JSON.stringify(filters),
@@ -483,7 +492,11 @@ class APIClient {
   }
 
   createPart = async (part: any) => {
-    console.log('API: Creating part:', part);
+    console.log('🚀 [API.createPart] Starting request with part:', {
+      name: part.name,
+      category: part.category,
+      ai_identified: part.ai_identified
+    });
     return this.makeRequest('parts-crud', {
       method: 'POST',
       body: JSON.stringify(part)
