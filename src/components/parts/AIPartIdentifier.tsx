@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Camera, Brain, Zap, Package, AlertTriangle, ExternalLink, Loader2, Download, Box } from 'lucide-react';
+import { Camera, Brain, Zap, Package, AlertTriangle, ExternalLink, Loader2, Download, Box, Upload } from 'lucide-react';
 import { Button } from '@/components/common/Button';
 import { ImageUpload } from '@/components/common/ImageUpload';
 import { Modal } from '@/components/common/Modal';
@@ -7,6 +7,7 @@ import { OptimizedImage, useImagePlaceholder } from '@/components/common/Optimiz
 import { useCreatePart } from '@/hooks/api/useParts';
 import { useToast } from '@/hooks/useToast';
 import { api } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 
 interface IdentificationResult {
   name: string;
@@ -27,6 +28,7 @@ interface IdentificationResult {
   common_uses: string[];
   compatible_parts: string[];
   confidence: number;
+  ai_metadata?: any;
 }
 
 interface AIPartIdentifierProps {
@@ -41,22 +43,87 @@ export const AIPartIdentifier: React.FC<AIPartIdentifierProps> = ({
   onPartAdded 
 }) => {
   const [uploadedImages, setUploadedImages] = useState<string[]>([]);
+  const [uploadedImageUrls, setUploadedImageUrls] = useState<string[]>([]);
   const [additionalContext, setAdditionalContext] = useState('');
   const [isIdentifying, setIsIdentifying] = useState(false);
+  const [uploadingImages, setUploadingImages] = useState(false);
   const [identificationResult, setIdentificationResult] = useState<IdentificationResult | null>(null);
   const [identificationError, setIdentificationError] = useState<string | null>(null);
 
   const createPart = useCreatePart();
-  const { success, error } = useToast();
+  const { success, error, warning } = useToast();
 
-  const handleImagesUploaded = (urls: string[]) => {
-    setUploadedImages(urls);
+  const handleImagesUploaded = async (imageDataUrls: string[]) => {
+    console.log('📸 Images uploaded to component:', imageDataUrls.length);
+    setUploadedImages(imageDataUrls);
     setIdentificationResult(null);
     setIdentificationError(null);
+
+    // Upload images to Supabase Storage to get public URLs
+    setUploadingImages(true);
+    try {
+      const publicUrls = await uploadImagesToStorage(imageDataUrls);
+      setUploadedImageUrls(publicUrls);
+      console.log('☁️ Images uploaded to storage:', publicUrls);
+    } catch (uploadError) {
+      console.error('💥 Image upload failed:', uploadError);
+      error('Image upload failed', 'Unable to upload images to storage. Please try again.');
+    } finally {
+      setUploadingImages(false);
+    }
+  };
+
+  // Upload images to Supabase Storage
+  const uploadImagesToStorage = async (imageDataUrls: string[]): Promise<string[]> => {
+    const publicUrls: string[] = [];
+
+    for (let i = 0; i < imageDataUrls.length; i++) {
+      const dataUrl = imageDataUrls[i];
+      
+      try {
+        // Convert data URL to blob
+        const response = await fetch(dataUrl);
+        const blob = await response.blob();
+        
+        // Generate unique filename
+        const timestamp = Date.now();
+        const randomId = Math.random().toString(36).substr(2, 9);
+        const fileName = `part-identification/${timestamp}-${randomId}-${i}.jpg`;
+
+        console.log(`📤 Uploading image ${i + 1}/${imageDataUrls.length}: ${fileName}`);
+
+        // Upload to Supabase Storage
+        const { data, error: uploadError } = await supabase.storage
+          .from('salvage-parts')
+          .upload(fileName, blob, {
+            contentType: 'image/jpeg',
+            upsert: false
+          });
+
+        if (uploadError) {
+          console.error('Supabase upload error:', uploadError);
+          throw new Error(`Upload failed: ${uploadError.message}`);
+        }
+
+        // Get public URL
+        const { data: { publicUrl } } = supabase.storage
+          .from('salvage-parts')
+          .getPublicUrl(fileName);
+
+        publicUrls.push(publicUrl);
+        console.log(`✅ Image ${i + 1} uploaded:`, publicUrl);
+
+      } catch (uploadError) {
+        console.error(`❌ Failed to upload image ${i + 1}:`, uploadError);
+        throw uploadError;
+      }
+    }
+
+    return publicUrls;
   };
 
   const handleIdentifyPart = async () => {
-    if (uploadedImages.length === 0) {
+    if (uploadedImageUrls.length === 0) {
       error('Upload required', 'Please upload at least one image to identify the part');
       return;
     }
@@ -66,44 +133,52 @@ export const AIPartIdentifier: React.FC<AIPartIdentifierProps> = ({
     setIdentificationError(null);
 
     try {
-      // For now, simulate identification since we don't have Claude Vision set up
-      // In production, this would send the image to Claude Vision API
-      const description = `Unknown electronic component from uploaded image. ${additionalContext ? `Additional context: ${additionalContext}` : ''}`;
+      console.log('🔍 Starting AI identification with images:', uploadedImageUrls);
 
+      // Use the first uploaded image for identification
+      const primaryImageUrl = uploadedImageUrls[0];
+      
       const response = await api.aiResearchPart({
-        description,
+        description: additionalContext || 'Identify this electronic component from the image',
         mode: 'research',
+        imageUrl: primaryImageUrl,
         context: {
           has_image: true,
-          image_count: uploadedImages.length,
-          additional_context: additionalContext
+          image_count: uploadedImageUrls.length,
+          additional_context: additionalContext,
+          all_image_urls: uploadedImageUrls
         }
       });
 
-      if (response.error) {
-        throw new Error(response.error);
+      console.log('🎯 AI identification response:', response);
+
+      if (!response.success) {
+        if (response.fallback) {
+          // Use fallback data but warn user
+          setIdentificationResult(response.fallback);
+          warning('Partial identification', response.error || 'AI had trouble identifying this part. Please verify the details.');
+        } else {
+          throw new Error(response.error || 'AI identification failed');
+        }
+      } else if (response.research) {
+        setIdentificationResult(response.research);
+        success('Part identified!', `AI identified this as: ${response.research.name}`);
+      } else {
+        throw new Error('Invalid response format from AI');
       }
 
-      // Don't add broken placeholder URLs - let local generation handle it
-      const enhancedResult: IdentificationResult = {
-        ...response.research,
-        // Only include working image URLs, filter out placeholders
-        image_urls: response.research.image_urls?.filter((url: string) => 
-          url.startsWith('http') && !url.includes('placeholder') && !url.includes('via.placeholder')
-        ) || [],
-        // Ensure 3D model arrays exist
-        model_3d_urls: response.research.model_3d_urls || [],
-        model_formats: response.research.model_formats || []
-      };
-
-      setIdentificationResult(enhancedResult);
-      success('Part identified!', `AI identified this as: ${enhancedResult.name}`);
-
     } catch (err) {
-      console.error('Part identification error:', err);
+      console.error('💥 Part identification error:', err);
       const errorMessage = err instanceof Error ? err.message : 'Unknown error';
       setIdentificationError(errorMessage);
-      error('Identification failed', errorMessage);
+      
+      if (errorMessage.includes('DEVELOPMENT ERROR') || errorMessage.includes('Wrong server')) {
+        error('Development Server Error', 'Please use http://localhost:3000 and run "npm run dev"');
+      } else if (errorMessage.includes('API key') || errorMessage.includes('not configured')) {
+        error('Configuration Error', 'AI service not configured. Please check your API keys in Settings.');
+      } else {
+        error('Identification failed', errorMessage);
+      }
     } finally {
       setIsIdentifying(false);
     }
@@ -121,7 +196,7 @@ export const AIPartIdentifier: React.FC<AIPartIdentifierProps> = ({
         quantity: identificationResult.typical_quantity || 1,
         specs: identificationResult.specifications,
         tags: identificationResult.tags,
-        images: [...uploadedImages, ...identificationResult.image_urls],
+        images: [...uploadedImageUrls, ...identificationResult.image_urls],
         datasheet_url: identificationResult.datasheet_url,
         value_estimate: identificationResult.estimated_value,
         ai_identified: true,
@@ -132,10 +207,11 @@ export const AIPartIdentifier: React.FC<AIPartIdentifierProps> = ({
           safety_warnings: identificationResult.safety_warnings,
           common_uses: identificationResult.common_uses,
           compatible_parts: identificationResult.compatible_parts,
-          identification_images: uploadedImages,
+          identification_images: uploadedImageUrls,
           identification_context: additionalContext,
           model_3d_urls: identificationResult.model_3d_urls,
-          model_formats: identificationResult.model_formats
+          model_formats: identificationResult.model_formats,
+          ai_metadata: identificationResult.ai_metadata
         }
       });
 
@@ -149,6 +225,7 @@ export const AIPartIdentifier: React.FC<AIPartIdentifierProps> = ({
 
   const handleClose = () => {
     setUploadedImages([]);
+    setUploadedImageUrls([]);
     setAdditionalContext('');
     setIdentificationResult(null);
     setIdentificationError(null);
@@ -181,11 +258,20 @@ export const AIPartIdentifier: React.FC<AIPartIdentifierProps> = ({
             maxFiles={3}
             maxSizeBytes={5 * 1024 * 1024} // 5MB
             acceptedTypes={['image/jpeg', 'image/png', 'image/webp']}
-            disabled={isIdentifying}
+            disabled={isIdentifying || uploadingImages}
           />
           <p className="text-sm text-garage-400 mt-2">
             💡 Tip: Take clear photos from multiple angles, including any markings or part numbers
           </p>
+          
+          {uploadingImages && (
+            <div className="mt-2 p-2 bg-cyber-cyan/20 border border-cyber-cyan rounded-sm">
+              <div className="flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-cyber-cyan" />
+                <span className="text-cyber-cyan font-mono text-sm">Uploading images to storage...</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Additional Context */}
@@ -198,7 +284,7 @@ export const AIPartIdentifier: React.FC<AIPartIdentifierProps> = ({
             onChange={(e) => setAdditionalContext(e.target.value)}
             placeholder="e.g., 'Found in old radio', 'Has 8 pins', 'Marked with 555', 'From Arduino kit'"
             rows={3}
-            disabled={isIdentifying}
+            disabled={isIdentifying || uploadingImages}
             className="block w-full px-3 py-2 bg-garage-800 border border-garage-600 rounded-md text-garage-100 placeholder-garage-400 focus:outline-none focus:ring-2 focus:ring-electric-500 focus:border-electric-500"
           />
           <p className="text-sm text-garage-500 mt-1">
@@ -209,7 +295,7 @@ export const AIPartIdentifier: React.FC<AIPartIdentifierProps> = ({
         {/* Identify Button */}
         <Button
           onClick={handleIdentifyPart}
-          disabled={uploadedImages.length === 0 || isIdentifying}
+          disabled={uploadedImageUrls.length === 0 || isIdentifying || uploadingImages}
           loading={isIdentifying}
           className="w-full"
           icon={isIdentifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
