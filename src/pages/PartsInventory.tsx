@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, Plus, Grid, List, Filter, Search, Upload, Brain, MessageSquare, RefreshCw, Camera } from 'lucide-react';
+import { Package, Plus, Grid, List, Filter, Search, Upload, Brain, RefreshCw, Camera } from 'lucide-react';
 import { Button } from '@/components/common/Button';
 import { Input } from '@/components/common/Input';
 import { Modal } from '@/components/common/Modal';
@@ -11,9 +11,6 @@ import { PartCard } from '@/components/parts/PartCard';
 import { PartTable } from '@/components/parts/PartTable';
 import { QuickAddPart } from '@/components/parts/QuickAddPart';
 import { BulkAddParts } from '@/components/parts/BulkAddParts';
-import { SmartPartSuggestions } from '@/components/parts/SmartPartSuggestions';
-import { AIPartEntry } from '@/components/parts/AIPartEntry';
-import { NaturalLanguageEntry } from '@/components/parts/NaturalLanguageEntry';
 import { AIPartIdentifier } from '@/components/parts/AIPartIdentifier';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -21,10 +18,7 @@ export const PartsInventory: React.FC = () => {
   const { partsView, setPartsView } = useUIStore();
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
-  const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [showBulkAdd, setShowBulkAdd] = useState(false);
-  const [showAIEntry, setShowAIEntry] = useState(false);
-  const [showNLEntry, setShowNLEntry] = useState(false);
   const [showAIIdentifier, setShowAIIdentifier] = useState(false);
   const [editingPart, setEditingPart] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -39,7 +33,6 @@ export const PartsInventory: React.FC = () => {
   });
 
   const deletePart = useDeletePart();
-
   const parts = partsData?.parts || [];
 
   // Debug effect to track parts data changes
@@ -67,31 +60,6 @@ export const PartsInventory: React.FC = () => {
     });
   }, [isLoading, isError, isSuccess, parts.length, partsData?.total, error, searchQuery, categoryFilter]);
 
-  const handleAddPart = () => {
-    setEditingPart(null);
-    setShowForm(true);
-  };
-
-  const handleQuickAdd = () => {
-    setShowQuickAdd(true);
-  };
-
-  const handleBulkAdd = () => {
-    setShowBulkAdd(true);
-  };
-
-  const handleAIEntry = () => {
-    setShowAIEntry(true);
-  };
-
-  const handleNLEntry = () => {
-    setShowNLEntry(true);
-  };
-
-  const handleAIIdentifier = () => {
-    setShowAIIdentifier(true);
-  };
-
   const handleEditPart = (part: any) => {
     setEditingPart(part);
     setShowForm(true);
@@ -108,26 +76,19 @@ export const PartsInventory: React.FC = () => {
 
   const handleRefresh = () => {
     console.log('🔄 [PartsInventory] Manual refresh triggered');
-    queryClient.removeQueries({ queryKey: ['parts'] }); // Clear cache
+    queryClient.removeQueries({ queryKey: ['parts'] });
     refetch();
   };
 
   const handlePartAdded = () => {
     console.log('🎉 [PartsInventory] Part added callback triggered');
-    // Force refresh the parts list immediately
     refetch();
-    // Also invalidate cache to ensure fresh data
     queryClient.invalidateQueries({ queryKey: ['parts'] });
   };
 
-  // Force debug refresh button
   const handleDebugRefresh = () => {
     console.log('🐛 [PartsInventory] DEBUG: Force clearing all cache and refetching');
-    
-    // Clear ALL React Query cache
     queryClient.clear();
-    
-    // Wait a moment then refetch
     setTimeout(() => {
       refetch();
     }, 100);
@@ -176,7 +137,7 @@ export const PartsInventory: React.FC = () => {
             </Button>
             <Button 
               variant="outline" 
-              onClick={handleAIIdentifier} 
+              onClick={() => setShowAIIdentifier(true)} 
               icon={<Camera className="w-4 h-4" />}
               glow
             >
@@ -184,15 +145,7 @@ export const PartsInventory: React.FC = () => {
             </Button>
             <Button 
               variant="outline" 
-              onClick={handleAIEntry} 
-              icon={<Brain className="w-4 h-4" />}
-              glow
-            >
-              AI RESEARCH
-            </Button>
-            <Button 
-              variant="outline" 
-              onClick={handleBulkAdd} 
+              onClick={() => setShowBulkAdd(true)} 
               icon={<Upload className="w-4 h-4" />}
             >
               BULK ADD
@@ -249,18 +202,6 @@ export const PartsInventory: React.FC = () => {
             </div>
           </div>
         </div>
-
-        {/* Smart Suggestions */}
-        {searchQuery.length >= 2 && (
-          <SmartPartSuggestions 
-            searchQuery={searchQuery} 
-            onPartAdded={() => {
-              // Refresh the parts list
-              refetch();
-              setSearchQuery('');
-            }}
-          />
-        )}
 
         {/* Quick Add Section - Always Visible */}
         <QuickAddPart onSuccess={handlePartAdded} />
@@ -349,27 +290,6 @@ export const PartsInventory: React.FC = () => {
           size="lg"
         >
           <BulkAddParts />
-        </Modal>
-
-        {/* AI Research Modal */}
-        <Modal
-          isOpen={showAIEntry}
-          onClose={() => setShowAIEntry(false)}
-          title="AI PART RESEARCH"
-          size="xl"
-          variant="terminal"
-        >
-          <AIPartEntry onSuccess={() => setShowAIEntry(false)} />
-        </Modal>
-
-        {/* Natural Language Entry Modal */}
-        <Modal
-          isOpen={showNLEntry}
-          onClose={() => setShowNLEntry(false)}
-          title="NATURAL LANGUAGE ENTRY"
-          size="lg"
-        >
-          <NaturalLanguageEntry onSuccess={() => setShowNLEntry(false)} />
         </Modal>
         
         {/* Part Form Modal */}

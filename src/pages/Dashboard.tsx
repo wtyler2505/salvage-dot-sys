@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { Package, Brain, Wrench, TrendingUp, Plus, Search, Zap, Target, Clock, CheckCircle, Activity } from 'lucide-react';
 import { Button } from '@/components/common/Button';
 import { QuickAddPart } from '@/components/parts/QuickAddPart';
-import { useDashboardStats } from '@/hooks/useDashboardStats';
+import { useParts } from '@/hooks/api/useParts';
+import { useProjects } from '@/hooks/api/useProjects';
 import { useNavigate } from 'react-router-dom';
 
 const StatCard = ({ title, value, icon: Icon, trend, color, subtitle }: {
@@ -56,8 +57,23 @@ const QuickAction = ({ title, description, icon: Icon, onClick }: {
 
 export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const stats = useDashboardStats();
   const [showQuickAdd, setShowQuickAdd] = useState(false);
+
+  const { data: partsData } = useParts();
+  const { data: projectsData } = useProjects();
+
+  const parts = partsData?.parts || [];
+  const projects = projectsData?.projects || [];
+
+  const totalParts = parts.length;
+  const availableParts = parts.filter(p => p.is_available).length;
+  const totalProjects = projects.length;
+  const completedProjects = projects.filter(p => p.status === 'completed').length;
+  const successRate = totalProjects > 0 ? Math.round((completedProjects / totalProjects) * 100) : 0;
+
+  const totalValue = parts.reduce((sum, part) => {
+    return sum + (parseFloat(part.value_estimate) || 0) * (part.quantity || 1);
+  }, 0);
 
   const formatTimeAgo = (dateString: string) => {
     const now = new Date();
@@ -103,33 +119,31 @@ export const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
           title="TOTAL PARTS"
-          value={stats.totalParts}
+          value={totalParts}
           icon={Package}
-          trend={`${stats.availableParts} available`}
+          trend={`${availableParts} available`}
           color="bg-cyber-cyan"
-          subtitle={`$${stats.totalValue.toFixed(2)} total value`}
+          subtitle={`$${totalValue.toFixed(2)} total value`}
         />
         <StatCard
-          title="ACTIVE PROJECTS"
-          value={stats.activeProjects}
+          title="TOTAL PROJECTS"
+          value={totalProjects}
           icon={Wrench}
-          trend={`${stats.completedProjects} completed`}
+          trend={`${completedProjects} completed`}
           color="bg-cyber-green"
-          subtitle={`${stats.totalProjects} total projects`}
         />
         <StatCard
-          title="AI IDENTIFICATIONS"
-          value={stats.aiIdentifiedParts}
+          title="AI PARTS"
+          value={parts.filter(p => p.ai_identified).length}
           icon={Brain}
-          trend={`${Math.round((stats.aiIdentifiedParts / stats.totalParts) * 100) || 0}% of parts`}
+          trend={`${Math.round((parts.filter(p => p.ai_identified).length / totalParts) * 100) || 0}% AI identified`}
           color="bg-cyber-magenta"
-          subtitle="AI-identified components"
         />
         <StatCard
           title="SUCCESS RATE"
-          value={`${stats.successRate}%`}
+          value={`${successRate}%`}
           icon={TrendingUp}
-          trend={stats.successRate > 70 ? "Great job!" : "Keep building!"}
+          trend={successRate > 70 ? "Great job!" : "Keep building!"}
           color="bg-cyber-orange"
           subtitle="Project completion rate"
         />
@@ -167,71 +181,8 @@ export const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Categories Overview */}
-      {Object.keys(stats.categoryCounts).length > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="cyber-card">
-            <h2 className="text-xl font-semibold text-text-primary mb-4 font-mono uppercase tracking-wider">PARTS BY CATEGORY</h2>
-            <div className="space-y-3">
-              {Object.entries(stats.categoryCounts)
-                .sort(([,a], [,b]) => b - a)
-                .slice(0, 6)
-                .map(([category, count]) => (
-                <div key={category} className="flex items-center justify-between">
-                  <span className="text-text-secondary font-mono">{category}</span>
-                  <div className="flex items-center space-x-2">
-                    <div className="w-20 h-2 bg-bg-tertiary rounded-full overflow-hidden">
-                      <div 
-                        className="h-full bg-cyber-cyan rounded-full transition-all duration-500"
-                        style={{ 
-                          width: `${Math.min((count / stats.totalParts) * 100, 100)}%` 
-                        }}
-                      />
-                    </div>
-                    <span className="text-text-muted text-sm w-8 text-right font-mono">{count}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Recent Activity */}
-          <div className="cyber-card">
-            <h2 className="text-xl font-semibold text-text-primary mb-4 font-mono uppercase tracking-wider">RECENT ACTIVITY</h2>
-            <div className="space-y-3">
-              {stats.recentActivity.length === 0 ? (
-                <p className="text-text-muted text-center py-4 font-mono">NO RECENT ACTIVITY</p>
-              ) : (
-                stats.recentActivity.map((activity, index) => (
-                  <div key={`${activity.type}-${activity.id}-${index}`} className="flex items-center space-x-3 py-2 border-b border-cyber-cyan/10 last:border-b-0">
-                    <div className={`w-2 h-2 rounded-full ${
-                      activity.type === 'part' ? 'bg-cyber-cyan' :
-                      activity.action === 'Completed' ? 'bg-cyber-green' : 'bg-cyber-orange'
-                    }`} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center space-x-2">
-                        <span className="text-text-secondary font-mono text-sm">
-                          <span className="font-medium text-text-primary">{activity.action}</span> {activity.item}
-                        </span>
-                        {activity.ai && (
-                          <div className="flex items-center space-x-1">
-                            <Brain className="w-3 h-3 text-cyber-magenta" />
-                            <span className="text-xs text-cyber-magenta font-mono">AI</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <span className="text-text-muted text-sm font-mono">{formatTimeAgo(activity.time)}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Getting Started Tips */}
-      {stats.totalParts < 5 && (
+      {totalParts < 5 && (
         <div className="bg-gradient-to-r from-cyber-cyan/20 to-cyber-magenta/20 border border-cyber-cyan rounded-sm p-6 text-text-primary scanning">
           <h2 className="text-xl font-semibold mb-2 font-mono uppercase tracking-wider flex items-center">
             <Zap className="w-5 h-5 mr-2 text-cyber-cyan" />
