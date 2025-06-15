@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, FileText, Download, AlertTriangle, CheckCircle, X, Loader2 } from 'lucide-react';
+import { Upload, FileText, Download, AlertTriangle, CheckCircle, X, Loader2, Eye, Database } from 'lucide-react';
 import { Button } from '@/components/common/Button';
 import { useCreatePart } from '@/hooks/api/useParts';
 import { useToast } from '@/hooks/useToast';
@@ -9,7 +9,14 @@ interface BulkAddResult {
   success: number;
   failed: number;
   errors: Array<{ row: number; name: string; error: string }>;
-  successfulParts: Array<{ name: string; category: string }>;
+  successfulParts: Array<{ name: string; category: string; id?: string }>;
+  rawApiResponses: Array<any>;
+  debugInfo: {
+    totalRows: number;
+    processingTime: number;
+    cacheCleared: boolean;
+    refetchTriggered: boolean;
+  };
 }
 
 export const BulkAddParts: React.FC = () => {
@@ -17,6 +24,7 @@ export const BulkAddParts: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState({ current: 0, total: 0 });
   const [results, setResults] = useState<BulkAddResult | null>(null);
+  const [debugMode, setDebugMode] = useState(false);
   
   const createPart = useCreatePart();
   const { success, error, warning } = useToast();
@@ -36,7 +44,7 @@ export const BulkAddParts: React.FC = () => {
       const content = event.target?.result as string;
       setCsvData(content);
       setResults(null);
-      console.log('📄 CSV file loaded:', { 
+      console.log('📄 [BulkAdd] CSV file loaded:', { 
         size: content.length, 
         lines: content.split('\n').length 
       });
@@ -70,6 +78,8 @@ export const BulkAddParts: React.FC = () => {
   };
 
   const mapCSVToPart = (headers: string[], values: string[], rowNumber: number): any => {
+    console.log(`🔄 [BulkAdd] Mapping row ${rowNumber}:`, { headers, values });
+    
     const part: any = {
       name: '',
       description: '',
@@ -87,23 +97,28 @@ export const BulkAddParts: React.FC = () => {
       metadata: {
         bulk_imported: true,
         import_row: rowNumber,
-        import_timestamp: new Date().toISOString()
+        import_timestamp: new Date().toISOString(),
+        csv_headers: headers,
+        csv_values: values
       }
     };
 
-    // Map CSV columns to part fields (case-insensitive)
+    // Enhanced field mapping with more variations
     const fieldMapping: Record<string, string> = {
       'item name': 'name',
       'name': 'name',
       'part name': 'name',
       'component': 'name',
+      'component name': 'name',
       
       'category': 'category',
       'type': 'category',
       'component type': 'category',
+      'part type': 'category',
       
       'subcategory': 'subcategory',
       'subtype': 'subcategory',
+      'sub-category': 'subcategory',
       
       'description': 'description',
       'desc': 'description',
@@ -112,41 +127,56 @@ export const BulkAddParts: React.FC = () => {
       'quantity': 'quantity',
       'qty': 'quantity',
       'count': 'quantity',
+      'amount': 'quantity',
       
       'location': 'location',
       'storage location': 'location',
+      'storage': 'location',
       'bin': 'location',
+      'shelf': 'location',
       
       'source': 'source',
       'source/origin': 'source',
       'origin': 'source',
+      'from': 'source',
       
       'notes': 'notes',
       'note': 'notes',
       'comments': 'notes',
+      'comment': 'notes',
       
       'new value': 'value_estimate',
       'value': 'value_estimate',
       'price': 'value_estimate',
       'cost': 'value_estimate',
+      'salvage value': 'value_estimate',
       
       'condition': 'condition'
     };
 
-    // Process each CSV column
+    let mappedFields = 0;
+    
+    // Process each CSV column with enhanced logging
     for (let i = 0; i < headers.length && i < values.length; i++) {
       const header = headers[i].toLowerCase().trim();
       const value = values[i].trim();
       
-      if (!value) continue; // Skip empty values
+      if (!value) {
+        console.log(`⚠️ [BulkAdd] Row ${rowNumber}, col ${i}: Empty value for "${header}"`);
+        continue; // Skip empty values
+      }
       
       const mappedField = fieldMapping[header];
       
       if (mappedField) {
+        mappedFields++;
+        console.log(`✅ [BulkAdd] Row ${rowNumber}: Mapping "${header}" → "${mappedField}" = "${value}"`);
+        
         switch (mappedField) {
           case 'quantity':
             const qty = parseInt(value);
             part.quantity = isNaN(qty) ? 1 : Math.max(0, qty);
+            console.log(`📊 [BulkAdd] Row ${rowNumber}: Parsed quantity: ${value} → ${part.quantity}`);
             break;
             
           case 'value_estimate':
@@ -155,6 +185,7 @@ export const BulkAddParts: React.FC = () => {
             if (priceMatch) {
               const price = parseFloat(priceMatch[0]);
               part.value_estimate = isNaN(price) ? null : price;
+              console.log(`💰 [BulkAdd] Row ${rowNumber}: Parsed value: "${value}" → ${part.value_estimate}`);
             }
             break;
             
@@ -164,35 +195,55 @@ export const BulkAddParts: React.FC = () => {
             part.is_available = !condition.includes('used') && !condition.includes('broken') && !condition.includes('damaged');
             if (!part.notes) part.notes = '';
             part.notes += (part.notes ? '; ' : '') + `Condition: ${value}`;
+            console.log(`🔧 [BulkAdd] Row ${rowNumber}: Condition "${value}" → available: ${part.is_available}`);
             break;
             
           default:
             part[mappedField] = value;
+            console.log(`📝 [BulkAdd] Row ${rowNumber}: Set ${mappedField} = "${value}"`);
         }
       } else {
         // Store unmapped fields in metadata
         part.metadata[header] = value;
+        console.log(`📦 [BulkAdd] Row ${rowNumber}: Stored unmapped "${header}" in metadata: "${value}"`);
       }
     }
 
-    // Validation
+    console.log(`📋 [BulkAdd] Row ${rowNumber}: Mapped ${mappedFields} fields out of ${headers.length} columns`);
+
+    // Validation with detailed logging
     if (!part.name) {
+      console.error(`❌ [BulkAdd] Row ${rowNumber}: CRITICAL - No name found!`, { headers, values, part });
       throw new Error('Part name is required');
     }
 
-    // Process special fields
+    // Process special metadata fields
     if (part.metadata['key specs']) {
       part.metadata.specifications = part.metadata['key specs'];
+      console.log(`🔧 [BulkAdd] Row ${rowNumber}: Added specifications from "key specs"`);
     }
     
     if (part.metadata['main applications']) {
-      part.tags.push(...part.metadata['main applications'].split(';').map((t: string) => t.trim()));
+      const apps = part.metadata['main applications'].split(';').map((t: string) => t.trim()).filter(Boolean);
+      part.tags.push(...apps);
+      console.log(`🏷️ [BulkAdd] Row ${rowNumber}: Added ${apps.length} tags from applications`);
     }
     
     if (part.metadata['project ideas']) {
       if (!part.notes) part.notes = '';
       part.notes += (part.notes ? '\n\nProject Ideas: ' : 'Project Ideas: ') + part.metadata['project ideas'];
+      console.log(`💡 [BulkAdd] Row ${rowNumber}: Added project ideas to notes`);
     }
+
+    console.log(`✅ [BulkAdd] Row ${rowNumber}: Final part object:`, {
+      name: part.name,
+      category: part.category,
+      quantity: part.quantity,
+      location: part.location,
+      value_estimate: part.value_estimate,
+      is_available: part.is_available,
+      metadata_keys: Object.keys(part.metadata)
+    });
 
     return part;
   };
@@ -203,6 +254,7 @@ export const BulkAddParts: React.FC = () => {
       return;
     }
 
+    const startTime = Date.now();
     setIsProcessing(true);
     setResults(null);
     
@@ -210,11 +262,18 @@ export const BulkAddParts: React.FC = () => {
       success: 0,
       failed: 0,
       errors: [],
-      successfulParts: []
+      successfulParts: [],
+      rawApiResponses: [],
+      debugInfo: {
+        totalRows: 0,
+        processingTime: 0,
+        cacheCleared: false,
+        refetchTriggered: false
+      }
     };
 
     try {
-      console.log('🚀 [BulkAdd] Starting bulk import process');
+      console.log('🚀 [BulkAdd] ===== STARTING BULK IMPORT PROCESS =====');
       
       const lines = csvData.trim().split('\n');
       if (lines.length < 2) {
@@ -222,41 +281,53 @@ export const BulkAddParts: React.FC = () => {
       }
 
       const headers = parseCSVRow(lines[0]);
-      console.log('📋 [BulkAdd] CSV headers:', headers);
+      console.log('📋 [BulkAdd] CSV headers detected:', headers);
 
       const dataRows = lines.slice(1).filter(line => line.trim()); // Remove empty lines
+      result.debugInfo.totalRows = dataRows.length;
       setProcessingProgress({ current: 0, total: dataRows.length });
 
-      console.log(`📊 [BulkAdd] Processing ${dataRows.length} rows`);
+      console.log(`📊 [BulkAdd] Processing ${dataRows.length} data rows`);
 
-      // Process each row
+      // Check current cache state before starting
+      const currentCache = queryClient.getQueryData(['parts']);
+      console.log('📦 [BulkAdd] Current parts cache before bulk add:', currentCache);
+
+      // Process each row with detailed logging
       for (let i = 0; i < dataRows.length; i++) {
         const rowNumber = i + 2; // +2 because we skipped header and arrays are 0-based
         setProcessingProgress({ current: i + 1, total: dataRows.length });
 
         try {
+          console.log(`\n🔄 [BulkAdd] ===== PROCESSING ROW ${rowNumber}/${dataRows.length + 1} =====`);
+          
           const values = parseCSVRow(dataRows[i]);
-          console.log(`🔄 [BulkAdd] Processing row ${rowNumber}:`, values[0]); // Log first column (usually name)
+          console.log(`📝 [BulkAdd] Row ${rowNumber} raw values:`, values);
 
           const partData = mapCSVToPart(headers, values, rowNumber);
-          console.log(`📦 [BulkAdd] Mapped part data for row ${rowNumber}:`, {
-            name: partData.name,
-            category: partData.category,
-            quantity: partData.quantity
-          });
+          console.log(`📦 [BulkAdd] Row ${rowNumber} mapped part data:`, partData);
 
-          // Create the part
+          // Create the part with detailed API logging
+          console.log(`🚀 [BulkAdd] Row ${rowNumber}: Calling createPart API...`);
           const createResult = await createPart.mutateAsync(partData);
-          console.log(`✅ [BulkAdd] Row ${rowNumber} created successfully:`, createResult.part?.id);
+          console.log(`✅ [BulkAdd] Row ${rowNumber}: API SUCCESS:`, createResult);
 
           result.success++;
+          result.rawApiResponses.push(createResult);
           result.successfulParts.push({
             name: partData.name,
-            category: partData.category || 'Unknown'
+            category: partData.category || 'Unknown',
+            id: createResult.part?.id
+          });
+
+          console.log(`🎯 [BulkAdd] Row ${rowNumber}: SUCCESS SUMMARY:`, {
+            name: partData.name,
+            createdId: createResult.part?.id,
+            totalSuccess: result.success
           });
 
         } catch (partError) {
-          console.error(`❌ [BulkAdd] Row ${rowNumber} failed:`, partError);
+          console.error(`❌ [BulkAdd] Row ${rowNumber}: FAILED:`, partError);
           
           result.failed++;
           result.errors.push({
@@ -264,37 +335,88 @@ export const BulkAddParts: React.FC = () => {
             name: parseCSVRow(dataRows[i])[0] || `Row ${rowNumber}`,
             error: partError instanceof Error ? partError.message : 'Unknown error'
           });
+
+          console.error(`💥 [BulkAdd] Row ${rowNumber}: ERROR DETAILS:`, {
+            error: partError,
+            rawRow: dataRows[i],
+            totalFailed: result.failed
+          });
         }
 
-        // Small delay to prevent overwhelming the API
+        // Small delay to prevent API overwhelming
         if (i < dataRows.length - 1) {
           await new Promise(resolve => setTimeout(resolve, 100));
         }
       }
 
-      console.log('🎯 [BulkAdd] Bulk import completed:', result);
+      result.debugInfo.processingTime = Date.now() - startTime;
+      console.log(`🏁 [BulkAdd] ===== BULK IMPORT COMPLETED =====`);
+      console.log(`📊 [BulkAdd] FINAL RESULTS:`, result);
+
+      // CRITICAL: Force refresh the parts cache with extensive logging
+      console.log('🗑️ [BulkAdd] ===== STARTING CACHE REFRESH =====');
+      
+      const cacheBeforeRemove = queryClient.getQueryData(['parts']);
+      console.log('📦 [BulkAdd] Cache state before removal:', cacheBeforeRemove);
+      
+      queryClient.removeQueries({ queryKey: ['parts'] });
+      result.debugInfo.cacheCleared = true;
+      console.log('🗑️ [BulkAdd] Cache cleared');
+      
+      queryClient.invalidateQueries({ queryKey: ['parts'] });
+      console.log('🔄 [BulkAdd] Cache invalidated');
+      
+      // Force immediate refetch with multiple attempts
+      console.log('⚡ [BulkAdd] Starting forced refetch...');
+      
+      setTimeout(async () => {
+        console.log('⚡ [BulkAdd] Attempt 1: Force refetch...');
+        try {
+          const refetchResult = await queryClient.refetchQueries({ queryKey: ['parts'] });
+          console.log('✅ [BulkAdd] Refetch attempt 1 result:', refetchResult);
+          result.debugInfo.refetchTriggered = true;
+        } catch (refetchError) {
+          console.error('❌ [BulkAdd] Refetch attempt 1 failed:', refetchError);
+        }
+      }, 200);
+      
+      setTimeout(async () => {
+        console.log('⚡ [BulkAdd] Attempt 2: Second refetch...');
+        try {
+          await queryClient.refetchQueries({ queryKey: ['parts'] });
+          console.log('✅ [BulkAdd] Refetch attempt 2 completed');
+        } catch (refetchError) {
+          console.error('❌ [BulkAdd] Refetch attempt 2 failed:', refetchError);
+        }
+      }, 1000);
+
+      setTimeout(() => {
+        const cacheAfterRefresh = queryClient.getQueryData(['parts']);
+        console.log('📦 [BulkAdd] Cache state after refresh attempts:', cacheAfterRefresh);
+      }, 2000);
+
       setResults(result);
 
-      // Force refresh the parts list
-      console.log('🔄 [BulkAdd] Refreshing parts cache...');
-      queryClient.removeQueries({ queryKey: ['parts'] });
-      queryClient.invalidateQueries({ queryKey: ['parts'] });
-      
-      setTimeout(() => {
-        queryClient.refetchQueries({ queryKey: ['parts'] });
-      }, 500);
-
-      // Show results
+      // Show results with detailed feedback
       if (result.success > 0 && result.failed === 0) {
-        success('Bulk import successful!', `Added ${result.success} parts to your inventory`);
+        success(
+          'Bulk import successful!', 
+          `Added ${result.success} parts to your inventory. Check the parts list!`
+        );
       } else if (result.success > 0 && result.failed > 0) {
-        warning('Partial success', `Added ${result.success} parts, but ${result.failed} failed. Check details below.`);
+        warning(
+          'Partial success', 
+          `Added ${result.success} parts, but ${result.failed} failed. Check details below.`
+        );
       } else {
-        error('Import failed', `All ${result.failed} parts failed to import. Check details below.`);
+        error(
+          'Import failed', 
+          `All ${result.failed} parts failed to import. Check debug details below.`
+        );
       }
 
     } catch (globalError) {
-      console.error('💥 [BulkAdd] Global error:', globalError);
+      console.error('💥 [BulkAdd] GLOBAL ERROR:', globalError);
       error('Bulk import failed', globalError instanceof Error ? globalError.message : 'Unknown error occurred');
     } finally {
       setIsProcessing(false);
@@ -323,21 +445,52 @@ ESP32 Board,Microcontroller,WiFi Module,ESP32 development board with WiFi/Blueto
     setCsvData('');
   };
 
+  const forceDataRefresh = async () => {
+    console.log('🔄 [BulkAdd] Manual force refresh triggered');
+    queryClient.clear(); // Clear ALL cache
+    setTimeout(() => {
+      queryClient.refetchQueries({ queryKey: ['parts'] });
+    }, 100);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold text-text-primary font-mono uppercase tracking-wider">
           BULK ADD PARTS FROM CSV
         </h3>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={downloadTemplate}
-          icon={<Download className="w-3 h-3" />}
-        >
-          DOWNLOAD TEMPLATE
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setDebugMode(!debugMode)}
+            className={debugMode ? 'text-cyber-orange border-cyber-orange' : ''}
+          >
+            🐛 DEBUG: {debugMode ? 'ON' : 'OFF'}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={downloadTemplate}
+            icon={<Download className="w-3 h-3" />}
+          >
+            DOWNLOAD TEMPLATE
+          </Button>
+        </div>
       </div>
+
+      {/* Debug Mode Info */}
+      {debugMode && (
+        <div className="bg-cyber-orange/20 border border-cyber-orange rounded-sm p-4">
+          <h4 className="font-medium text-cyber-orange mb-2 font-mono">🐛 DEBUG MODE ACTIVE</h4>
+          <div className="text-sm text-text-secondary font-mono space-y-1">
+            <p>• All API calls and data mapping will be logged to browser console</p>
+            <p>• Check browser console (F12) for detailed processing logs</p>
+            <p>• Cache operations will be logged for troubleshooting</p>
+            <p>• Use this to diagnose why parts aren't appearing in inventory</p>
+          </div>
+        </div>
+      )}
 
       {/* CSV Upload */}
       <div className="space-y-4">
@@ -395,6 +548,11 @@ ESP32 Board,Microcontroller,WiFi Module,ESP32 development board with WiFi/Blueto
                 }}
               />
             </div>
+            {debugMode && (
+              <p className="text-xs text-cyber-cyan mt-2 font-mono">
+                🐛 Check browser console for detailed processing logs
+              </p>
+            )}
           </div>
         )}
 
@@ -406,14 +564,25 @@ ESP32 Board,Microcontroller,WiFi Module,ESP32 development board with WiFi/Blueto
                 <h4 className="font-medium text-text-primary font-mono uppercase tracking-wider">
                   IMPORT RESULTS
                 </h4>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={clearResults}
-                  icon={<X className="w-3 h-3" />}
-                >
-                  CLEAR
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={forceDataRefresh}
+                    icon={<Database className="w-3 h-3" />}
+                    className="text-cyber-cyan border-cyber-cyan"
+                  >
+                    FORCE REFRESH
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={clearResults}
+                    icon={<X className="w-3 h-3" />}
+                  >
+                    CLEAR
+                  </Button>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-4 mb-4">
@@ -435,6 +604,27 @@ ESP32 Board,Microcontroller,WiFi Module,ESP32 development board with WiFi/Blueto
                 </div>
               </div>
 
+              {/* Debug Info */}
+              {debugMode && (
+                <div className="mb-4 bg-cyber-orange/10 border border-cyber-orange rounded-sm p-3">
+                  <h5 className="font-medium text-cyber-orange mb-2 font-mono">🐛 DEBUG INFORMATION:</h5>
+                  <div className="text-xs text-text-secondary font-mono space-y-1">
+                    <div>• Processing time: {results.debugInfo.processingTime}ms</div>
+                    <div>• Cache cleared: {results.debugInfo.cacheCleared ? '✅' : '❌'}</div>
+                    <div>• Refetch triggered: {results.debugInfo.refetchTriggered ? '✅' : '❌'}</div>
+                    <div>• API responses: {results.rawApiResponses.length}</div>
+                  </div>
+                  {results.rawApiResponses.length > 0 && (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-cyber-orange font-mono">View Raw API Responses</summary>
+                      <pre className="text-xs bg-bg-primary p-2 rounded mt-2 overflow-auto max-h-32">
+                        {JSON.stringify(results.rawApiResponses, null, 2)}
+                      </pre>
+                    </details>
+                  )}
+                </div>
+              )}
+
               {/* Successful Parts */}
               {results.successfulParts.length > 0 && (
                 <div className="mb-4">
@@ -442,7 +632,7 @@ ESP32 Board,Microcontroller,WiFi Module,ESP32 development board with WiFi/Blueto
                   <div className="max-h-32 overflow-y-auto bg-bg-primary rounded-sm p-2">
                     {results.successfulParts.map((part, index) => (
                       <div key={index} className="text-sm text-text-secondary font-mono">
-                        • {part.name} {part.category && `(${part.category})`}
+                        • {part.name} {part.category && `(${part.category})`} {part.id && `[ID: ${part.id.substring(0, 8)}...]`}
                       </div>
                     ))}
                   </div>
@@ -490,15 +680,30 @@ ESP32 Board,Microcontroller,WiFi Module,ESP32 development board with WiFi/Blueto
           <div>• <span className="text-text-primary">Subcategory</span></div>
           <div>• <span className="text-text-primary">Description</span></div>
           <div>• <span className="text-text-primary">Quantity</span></div>
-          <div>• <span className="text-text-primary">Location</span></div>
+          <div>• <span className="text-text-primary">Location / Storage Location</span></div>
           <div>• <span className="text-text-primary">Source/Origin</span></div>
-          <div>• <span className="text-text-primary">Value/Price</span></div>
-          <div>• <span className="text-text-primary">Notes</span></div>
+          <div>• <span className="text-text-primary">Value/Price/New Value/Salvage Value</span></div>
+          <div>• <span className="text-text-primary">Notes/Comments</span></div>
           <div>• <span className="text-text-primary">Condition</span></div>
         </div>
         <p className="text-xs text-text-muted mt-2 font-mono">
-          💡 Column names are case-insensitive. Unmapped columns will be stored in metadata.
+          💡 Column names are case-insensitive. Your CSV has great column names and should map perfectly!
         </p>
+      </div>
+
+      {/* Troubleshooting Section */}
+      <div className="bg-cyber-orange/10 border border-cyber-orange rounded-sm p-4">
+        <h4 className="font-medium text-cyber-orange mb-2 font-mono uppercase tracking-wider">
+          🚨 TROUBLESHOOTING: PARTS NOT SHOWING?
+        </h4>
+        <div className="text-sm text-text-secondary font-mono space-y-2">
+          <p>1. <strong>Enable DEBUG MODE</strong> (button above) and try again</p>
+          <p>2. Check browser console (F12) for detailed logs during import</p>
+          <p>3. Try the <strong>FORCE REFRESH</strong> button after import</p>
+          <p>4. Try the <strong>🐛 DEBUG REFRESH</strong> button on the main parts page</p>
+          <p>5. Make sure you're using <strong>http://localhost:3000</strong> not 5173</p>
+          <p>6. If problems persist, check that parts-crud function is working properly</p>
+        </div>
       </div>
     </div>
   );
