@@ -11,13 +11,17 @@
   functions = "netlify/functions"
   # Completely disable edge functions for dev
   edge_functions = false
+  # Force disable edge functions
+  edge_functions_dir = false
 
 [dev.environment]
   NETLIFY_USE_EDGE_FUNCTIONS = "false"
+  NETLIFY_EXPERIMENTAL_EDGE_FUNCTIONS = "false"
 
 [build.environment]
   NODE_VERSION = "18"
   NETLIFY_USE_EDGE_FUNCTIONS = "false"
+  NETLIFY_EXPERIMENTAL_EDGE_FUNCTIONS = "false"
 
 [[redirects]]
   from = "/*"
@@ -30,12 +34,19 @@
   # Explicitly specify this is for regular functions only
   directory = "netlify/functions"
 
-# Explicitly specify we're using regular functions, not edge functions
+# Explicitly disable edge functions in all contexts
 [context.production.environment]
   NETLIFY_USE_EDGE_FUNCTIONS = "false"
+  NETLIFY_EXPERIMENTAL_EDGE_FUNCTIONS = "false"
 
 [context.deploy-preview.environment]
   NETLIFY_USE_EDGE_FUNCTIONS = "false"
+  NETLIFY_EXPERIMENTAL_EDGE_FUNCTIONS = "false"
 
 [context.branch-deploy.environment]
   NETLIFY_USE_EDGE_FUNCTIONS = "false"
+  NETLIFY_EXPERIMENTAL_EDGE_FUNCTIONS = "false"
+
+# Disable edge functions completely
+[[edge_functions]]
+  # Empty array to explicitly disable

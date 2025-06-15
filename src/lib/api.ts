@@ -10,10 +10,29 @@ const getStoredAPIKeys = () => {
   }
 };
 
+// Check if we're in development mode and using the wrong server
+const checkDevEnvironment = () => {
+  if (import.meta.env.DEV && window.location.port === '5173') {
+    console.error('🚨 DEVELOPMENT ERROR: You are accessing the Vite dev server directly!');
+    console.error('📋 TO FIX: Use http://localhost:3000 instead of http://localhost:5173');
+    console.error('💡 REASON: API functions are only available through Netlify Dev server');
+    console.error('⚡ SOLUTION: Run "npm run dev" and use http://localhost:3000');
+    
+    // Show user-friendly error in UI
+    throw new Error(
+      'Development server error: Please use http://localhost:3000 instead of http://localhost:5173. ' +
+      'Run "npm run dev" and access the app at localhost:3000 for API functions to work properly.'
+    );
+  }
+};
+
 // Type-safe API client for Netlify functions
 class APIClient {
   private makeRequest = async (endpoint: string, options: RequestInit = {}, retryCount = 0): Promise<any> => {
     try {
+      // Check development environment first
+      checkDevEnvironment();
+
       // Get current session
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       
@@ -116,6 +135,22 @@ class APIClient {
         const errorText = await response.text();
         console.error(`API Error ${response.status}:`, errorText);
         
+        // Provide helpful development errors for 404s
+        if (response.status === 404 && import.meta.env.DEV) {
+          console.error('🚨 API 404 Error - Development Troubleshooting:');
+          console.error('1. Are you using the correct URL? Should be http://localhost:3000');
+          console.error('2. Did you start with "npm run dev" (not "npm run dev:vite")?');
+          console.error('3. Is the Netlify Dev server running properly?');
+          console.error('4. Check if the function exists in /netlify/functions/');
+          
+          throw new Error(
+            `API endpoint not found (404). This usually means:\n` +
+            `• You're using the wrong development server (use localhost:3000, not 5173)\n` +
+            `• You need to run "npm run dev" instead of "npm run dev:vite"\n` +
+            `• The Netlify function "${endpoint}" doesn't exist or isn't deployed`
+          );
+        }
+        
         // Parse error response to check for specific error codes
         let errorData;
         try {
@@ -200,7 +235,7 @@ class APIClient {
         }
         
         if (errorMessage.includes('fetch') || errorMessage.includes('network')) {
-          throw new Error('Network error - please check your internet connection');
+          throw new Error('Network error - please check your internet connection and ensure you\'re using the correct development server (localhost:3000)');
         }
       }
       
