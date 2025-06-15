@@ -10,27 +10,74 @@ const getStoredAPIKeys = () => {
   }
 };
 
-// Check if we're in development mode and using the wrong server
+// Enhanced check for development environment issues
 const checkDevEnvironment = () => {
-  if (import.meta.env.DEV && window.location.port === '5173') {
-    console.error('🚨 DEVELOPMENT ERROR: You are accessing the Vite dev server directly!');
-    console.error('📋 TO FIX: Use http://localhost:3000 instead of http://localhost:5173');
-    console.error('💡 REASON: API functions are only available through Netlify Dev server');
-    console.error('⚡ SOLUTION: Run "npm run dev" and use http://localhost:3000');
+  // More robust development server detection
+  const currentPort = window.location.port;
+  const currentHost = window.location.hostname;
+  const currentProtocol = window.location.protocol;
+  const currentUrl = window.location.href;
+  
+  console.log('🔍 Development Environment Check:', {
+    currentUrl,
+    currentHost,
+    currentPort,
+    currentProtocol,
+    isDev: import.meta.env.DEV,
+    mode: import.meta.env.MODE
+  });
+
+  // Check if we're in development mode
+  if (import.meta.env.DEV || import.meta.env.MODE === 'development') {
+    // Check if accessing Vite dev server directly (port 5173)
+    if (currentPort === '5173') {
+      const errorMessage = [
+        '🚨 CRITICAL: You are accessing the Vite dev server directly!',
+        '',
+        '❌ Current URL: ' + currentUrl,
+        '✅ Correct URL: http://localhost:3000',
+        '',
+        '🔧 TO FIX:',
+        '1. Stop the current server (Ctrl+C)',
+        '2. Run: npm run dev',
+        '3. Open: http://localhost:3000',
+        '',
+        '💡 WHY: API functions only work through Netlify Dev server, not Vite directly.',
+        '⚠️  Using port 5173 means no backend functions = 404 errors'
+      ].join('\n');
+      
+      console.error(errorMessage);
+      
+      // Show prominent error to user
+      const userError = 
+        'DEVELOPMENT ERROR: Wrong server!\n\n' +
+        'You\'re using http://localhost:5173 (Vite only)\n' +
+        'You need http://localhost:3000 (Netlify + Vite)\n\n' +
+        'Fix: Run "npm run dev" and use localhost:3000';
+        
+      // Throw error to prevent API calls
+      throw new Error(userError);
+    }
     
-    // Show user-friendly error in UI
-    throw new Error(
-      'Development server error: Please use http://localhost:3000 instead of http://localhost:5173. ' +
-      'Run "npm run dev" and access the app at localhost:3000 for API functions to work properly.'
-    );
+    // Check if using wrong protocol or host
+    if (currentHost === 'localhost' && currentPort !== '3000' && currentPort !== '5173') {
+      console.warn('⚠️  Unusual development port detected:', currentPort);
+    }
+    
+    // Ensure we're using the right port for API calls
+    if (currentPort === '3000') {
+      console.log('✅ Correct development server detected (Netlify Dev)');
+    }
   }
+  
+  return true;
 };
 
 // Type-safe API client for Netlify functions
 class APIClient {
   private makeRequest = async (endpoint: string, options: RequestInit = {}, retryCount = 0): Promise<any> => {
     try {
-      // Check development environment first
+      // CRITICAL: Check development environment FIRST
       checkDevEnvironment();
 
       // Get current session
@@ -112,43 +159,79 @@ class APIClient {
       // Get stored API keys
       const apiKeys = getStoredAPIKeys();
       
+      // Determine base URL - ensure we're using the right server
       const baseUrl = import.meta.env.DEV 
         ? '/.netlify/functions'
         : '/.netlify/functions';
 
-      console.log(`Making API request to: ${baseUrl}/${endpoint}`);
-      console.log('Using token:', currentToken.substring(0, 20) + '...');
+      const fullUrl = `${baseUrl}/${endpoint}`;
+      console.log(`🌐 Making API request to: ${fullUrl}`);
+      console.log('🔑 Using token:', currentToken.substring(0, 20) + '...');
 
-      const response = await fetch(`${baseUrl}/${endpoint}`, {
+      const response = await fetch(fullUrl, {
         ...options,
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${currentToken}`,
           'X-Anthropic-Key': apiKeys.anthropic || '',
           'X-Mem0-Key': apiKeys.mem0 || '',
-          'X-Perplexity-Key': apiKeys.perplexity || '', // Add Perplexity API key
+          'X-Perplexity-Key': apiKeys.perplexity || '',
           ...options.headers,
         },
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`API Error ${response.status}:`, errorText);
+        console.error(`❌ API Error ${response.status} for ${endpoint}:`, errorText);
         
-        // Provide helpful development errors for 404s
-        if (response.status === 404 && import.meta.env.DEV) {
-          console.error('🚨 API 404 Error - Development Troubleshooting:');
-          console.error('1. Are you using the correct URL? Should be http://localhost:3000');
-          console.error('2. Did you start with "npm run dev" (not "npm run dev:vite")?');
-          console.error('3. Is the Netlify Dev server running properly?');
-          console.error('4. Check if the function exists in /netlify/functions/');
+        // Enhanced 404 error handling for development
+        if (response.status === 404) {
+          console.error('🚨 API 404 Error - Enhanced Troubleshooting:');
           
-          throw new Error(
-            `API endpoint not found (404). This usually means:\n` +
-            `• You're using the wrong development server (use localhost:3000, not 5173)\n` +
-            `• You need to run "npm run dev" instead of "npm run dev:vite"\n` +
-            `• The Netlify function "${endpoint}" doesn't exist or isn't deployed`
-          );
+          if (import.meta.env.DEV) {
+            const currentUrl = window.location.href;
+            const isWrongServer = window.location.port === '5173';
+            
+            if (isWrongServer) {
+              console.error('💥 ROOT CAUSE: Using wrong development server!');
+              console.error('🔧 IMMEDIATE FIX REQUIRED:');
+              console.error('  1. Stop current server (Ctrl+C)');
+              console.error('  2. Run: npm run dev');
+              console.error('  3. Use: http://localhost:3000');
+              console.error('');
+              console.error('📋 Current (WRONG):', currentUrl);
+              console.error('✅ Correct URL: http://localhost:3000');
+              
+              throw new Error(
+                `🚨 CRITICAL DEVELOPMENT ERROR:\n\n` +
+                `You are using the WRONG development server!\n\n` +
+                `❌ Current: ${currentUrl}\n` +
+                `✅ Required: http://localhost:3000\n\n` +
+                `The function "${endpoint}" cannot be found because API functions\n` +
+                `are only available through the Netlify Dev server.\n\n` +
+                `TO FIX:\n` +
+                `1. Stop this server (Ctrl+C)\n` +
+                `2. Run: npm run dev\n` +
+                `3. Open: http://localhost:3000`
+              );
+            } else {
+              console.error('🔍 Development troubleshooting checklist:');
+              console.error('  1. Verify you started with: npm run dev');
+              console.error('  2. Check if Netlify Dev server is running');
+              console.error('  3. Verify function exists:', `netlify/functions/${endpoint}.ts`);
+              console.error('  4. Check Netlify CLI version: netlify --version');
+              console.error('  5. Try restarting: npm run dev');
+              
+              throw new Error(
+                `API Function Not Found: "${endpoint}"\n\n` +
+                `This usually means:\n` +
+                `• Function doesn't exist in netlify/functions/${endpoint}.ts\n` +
+                `• Netlify Dev server isn't running properly\n` +
+                `• Function failed to compile\n\n` +
+                `Try restarting with: npm run dev`
+              );
+            }
+          }
         }
         
         // Parse error response to check for specific error codes
@@ -213,11 +296,16 @@ class APIClient {
       }
 
       const result = await response.json();
-      console.log('API response received successfully');
+      console.log('✅ API response received successfully for:', endpoint);
       return result;
       
     } catch (error) {
-      console.error('API Request failed:', error);
+      console.error('💥 API Request failed for', endpoint, ':', error);
+      
+      // Re-throw development server errors immediately
+      if (error instanceof Error && error.message.includes('DEVELOPMENT ERROR')) {
+        throw error;
+      }
       
       // Check if this is an auth-related error
       if (error instanceof Error) {
