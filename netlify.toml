@@ -39,7 +39,3 @@
 
 [context.branch-deploy.environment]
   NETLIFY_USE_EDGE_FUNCTIONS = "false"
-
-# Disable edge functions globally
-[edge_functions]
-  # Empty section to prevent auto-detection
