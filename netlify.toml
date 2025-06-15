@@ -1,0 +1,45 @@
+[build]
+  command = "npm run build"
+  functions = "netlify/functions"
+  publish = "dist"
+
+[dev]
+  command = "npm run dev:vite"
+  port = 3000
+  targetPort = 5173
+  framework = "#custom"
+  functions = "netlify/functions"
+  # Completely disable edge functions for dev
+  edge_functions = false
+
+[dev.environment]
+  NETLIFY_USE_EDGE_FUNCTIONS = "false"
+
+[build.environment]
+  NODE_VERSION = "18"
+  NETLIFY_USE_EDGE_FUNCTIONS = "false"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[functions]
+  node_bundler = "esbuild"
+  external_node_modules = ["@supabase/supabase-js"]
+  # Explicitly specify this is for regular functions only
+  directory = "netlify/functions"
+
+# Explicitly specify we're using regular functions, not edge functions
+[context.production.environment]
+  NETLIFY_USE_EDGE_FUNCTIONS = "false"
+
+[context.deploy-preview.environment]
+  NETLIFY_USE_EDGE_FUNCTIONS = "false"
+
+[context.branch-deploy.environment]
+  NETLIFY_USE_EDGE_FUNCTIONS = "false"
+
+# Disable edge functions globally
+[edge_functions]
+  # Empty section to prevent auto-detection
