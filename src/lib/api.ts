@@ -116,6 +116,23 @@ class APIClient {
         const errorText = await response.text();
         console.error(`API Error ${response.status}:`, errorText);
         
+        // Parse error response to check for specific error codes
+        let errorData;
+        try {
+          errorData = JSON.parse(errorText);
+        } catch (parseError) {
+          errorData = { message: errorText };
+        }
+        
+        // Handle specific refresh token errors
+        if (errorData.code === 'refresh_token_not_found' || 
+            errorData.message?.includes('Invalid Refresh Token') ||
+            errorData.message?.includes('Refresh Token Not Found')) {
+          console.error('Refresh token not found, clearing session');
+          await this.handleAuthFailure('Refresh token not found');
+          throw new Error('Session expired - please login again');
+        }
+        
         // Handle authentication errors
         if (response.status === 401) {
           console.error('Received 401 Unauthorized');
@@ -174,7 +191,9 @@ class APIClient {
             errorMessage.includes('token') || 
             errorMessage.includes('login') ||
             errorMessage.includes('unauthorized') ||
-            errorMessage.includes('invalid token')) {
+            errorMessage.includes('invalid token') ||
+            errorMessage.includes('refresh token') ||
+            errorMessage.includes('session expired')) {
           // This is an auth error, make sure we clear the session
           await this.handleAuthFailure('Authentication error in catch block');
           throw error; // Re-throw auth errors as-is
